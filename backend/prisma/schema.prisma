@@ -1,0 +1,409 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * ==========================
+ * ENUMS
+ * ==========================
+ */
+
+enum RoleName {
+  SUPER_ADMIN
+  ADMIN
+  EMPLOYEE
+  USER
+  WORKER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PermissionEffect {
+  ALLOW
+  DENY
+}
+
+enum NotificationAudience {
+  ALL
+  SUPER_ADMIN
+  ADMIN
+  EMPLOYEE
+  USER
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum CalendarStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum WorkerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum EmployeeRequestType {
+  ATTENDANCE
+  LEAVE
+  FEEDBACK
+  CONTACT_SERVICE
+  DIFFICULTY
+}
+
+enum EmployeeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  RESOLVED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  STATUS_CHANGE
+  ROLE_CHANGE
+  PERMISSION_CHANGE
+}
+
+/**
+ * ==========================
+ * USER / ROLE / PERMISSION
+ * ==========================
+ */
+
+model User {
+  id       String     @id @default(cuid())
+  name     String
+  email    String     @unique
+  mobile   String?    @unique
+  password String
+  status   UserStatus @default(ACTIVE)
+
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  requestedRole RoleName @default(USER)
+
+  isRoleApproved   Boolean   @default(false)
+  roleApprovedAt   DateTime?
+  roleApprovedById String?
+
+  emailVerified   Boolean   @default(false)
+  emailVerifiedAt DateTime?
+
+  mobileVerified   Boolean   @default(false)
+  mobileVerifiedAt DateTime?
+
+  /**
+   * Use this for protected backend-created account.
+   * Example: main Super Admin account.
+   * If true, dashboard cannot change email/password/delete/deactivate.
+   */
+  isProtectedAccount Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdAuditLogs AdminAuditLog[] @relation("AuditActor")
+  targetAuditLogs  AdminAuditLog[] @relation("AuditTargetUser")
+
+  notifications       UserNotification[]
+  permissionOverrides UserPermissionOverride[]
+
+  employeeRequests    EmployeeRequest[]
+  mobileVerifications MobileVerification[]
+
+  @@index([roleId])
+  @@index([status])
+  @@index([mobile])
+  @@index([requestedRole])
+  @@index([isRoleApproved])
+  @@index([emailVerified])
+  @@index([mobileVerified])
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        RoleName @unique
+  description String?
+
+  users       User[]
+  permissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Permission {
+  id String @id @default(cuid())
+
+  key         String  @unique
+  label       String
+  module      String
+  description String?
+
+  roles     RolePermission[]
+  overrides UserPermissionOverride[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RolePermission {
+  id String @id @default(cuid())
+
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+model UserPermissionOverride {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  effect PermissionEffect @default(ALLOW)
+
+  assignedById String?
+  assignedAt   DateTime @default(now())
+
+  @@unique([userId, permissionId])
+  @@index([userId])
+  @@index([permissionId])
+}
+
+/**
+ * ==========================
+ * WORKER MANAGEMENT
+ * ==========================
+ */
+
+model Worker {
+  id        String       @id @default(cuid())
+  name      String
+  mobile    String?
+  address   String?
+  skillType String?
+  dailyWage Float?
+  status    WorkerStatus @default(ACTIVE)
+
+  createdById String?
+  updatedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdById])
+}
+
+/**
+ * ==========================
+ * ADMIN AUDIT LOGS
+ * ==========================
+ */
+
+model AdminAuditLog {
+  id String @id @default(cuid())
+
+  actorId String?
+  actor   User?   @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  targetUserId String?
+  targetUser   User?   @relation("AuditTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  action     AuditAction
+  module     String
+  entityType String
+  entityId   String?
+
+  title       String
+  description String @db.Text
+
+  oldData Json?
+  newData Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([targetUserId])
+  @@index([module])
+  @@index([createdAt])
+}
+
+/**
+ * ==========================
+ * NOTIFICATIONS
+ * ==========================
+ */
+
+model Notification {
+  id       String               @id @default(cuid())
+  title    String
+  message  String               @db.Text
+  audience NotificationAudience @default(ALL)
+  priority NotificationPriority @default(NORMAL)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  recipients UserNotification[]
+
+  @@index([audience])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+model UserNotification {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  isRead Boolean   @default(false)
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, notificationId])
+  @@index([userId])
+  @@index([notificationId])
+  @@index([isRead])
+}
+
+/**
+ * ==========================
+ * EMAIL + MOBILE VERIFICATION
+ * ==========================
+ */
+
+model MobileVerification {
+  id String @id @default(cuid())
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  name   String
+  email  String?
+  mobile String
+
+  status  VerificationStatus @default(PENDING)
+  remarks String?
+
+  emailOtpHash      String?
+  emailOtpExpiresAt DateTime?
+  emailOtpAttempts  Int       @default(0)
+  emailOtpSentAt    DateTime?
+  emailVerified     Boolean   @default(false)
+
+  mobileOtpHash      String?
+  mobileOtpExpiresAt DateTime?
+  mobileOtpAttempts  Int       @default(0)
+  mobileOtpSentAt    DateTime?
+  mobileVerified     Boolean   @default(false)
+
+  verifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([email])
+  @@index([mobile])
+  @@index([status])
+}
+
+/**
+ * ==========================
+ * CALENDAR EVENTS
+ * ==========================
+ */
+
+model CalendarEvent {
+  id          String               @id @default(cuid())
+  title       String
+  description String?              @db.Text
+  eventDate   DateTime
+  startTime   String?
+  endTime     String?
+  location    String?
+  audience    NotificationAudience @default(ALL)
+  status      CalendarStatus       @default(SCHEDULED)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([eventDate])
+  @@index([audience])
+  @@index([status])
+}
+
+/**
+ * ==========================
+ * EMPLOYEE DASHBOARD
+ * ==========================
+ */
+
+model EmployeeRequest {
+  id String @id @default(cuid())
+
+  employeeId String
+  employee   User   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  type    EmployeeRequestType
+  subject String
+  message String              @db.Text
+
+  fromDate DateTime?
+  toDate   DateTime?
+
+  status     EmployeeRequestStatus @default(PENDING)
+  adminReply String?               @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([employeeId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
